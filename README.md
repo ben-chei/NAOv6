@@ -25,15 +25,20 @@ $ echo $ROS_PACKAGE_PATH
 Als nächstes, müssen eure Python Skripts in dem Package abgelegt werden.
 Für das durchführen der Python Skripts, müssen vorher noch einige Dinge durchgeführt werden:
 In jedem Python Skript muss in der ersten Zeile folgendes stehen:
+
 #! /usr/bin/env python
 Speichert danach euer Skript.
 
 Danach geht Ihr zurück zum Terminal:
 Als erstes begebt Ihr euch, in das Catkin Package mit dem Befehl:
+
 $ cd catkin_ws
 
 Als nächstes müssen die Python Skripte für ROS ausführbar komprimiert werden:
 Jedes Python SKript muss vorher mit dem folgenden Befehl im Terminal ausführbar bearbeitet werden:
+
 chmod +x mypythonscript.py (für mypythonscript einfach mit dem Skript Namen ersetzen.)
+
 Als letztes müsst Ihr jetzt die Skripte ausführen:
+
 $ rosrun PackageName PythonSkriptName.py
