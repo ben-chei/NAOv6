@@ -1,12 +1,16 @@
 # NAOv6
 Für den Kurs "Autonome Systeme"
 
-Falls Catkin nicht installiert ist müsst ihr dies noch erledigen mit dem Befehl\\
+Falls Catkin nicht installiert ist müsst ihr dies noch erledigen mit dem Befehl:
+
 $ source /opt/ros/kinetic/setup.bash (Dies erfordert die Zustimmung vom Admin deswegen holt euch einen Labormitarbeiter)
+
 Als nächstes muss ein Catkin Workspace erstellt werden:
 
 $ mkdir -p ~/catkin_ws/src
+
 $ cd ~/catkin_ws/
+
 $ catkin_make
 Die Befehle nacheinander ausführen
 
