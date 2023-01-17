@@ -1,0 +1,275 @@
+#! /usr/bin/env python
+import os, sys, math, motion, almath, time
+import numpy as np
+from StringIO import StringIO
+from PIL import Image
+import cv2
+from naoqi import ALProxy
+
+ip = "192.168.20.172"
+port = 9559
+
+# Aufruf von Ips
+voice = ALProxy("ALTextToSpeech", ip , port)
+motionProxy = ALProxy("ALMotion", ip , port)
+camProxy = ALProxy("ALVideoDevice", ip, port)
+
+#Initialisation
+pil_color_space = "RGB"
+fps = 30
+resolution = 2   #VGA
+resolution = 2    # VGA
+colorSpace = 11   # RGB
+
+
+
+#Stiffness on  '''Steifigkeit an: aktive Steifigkeit aller Gelenke und Aktuatoren'
+#Wir verwenden den Namen "Rarm", um die Sammlung aller Gelenke zu bezeichnen
+#(pNames, pStiffnessLists, pTimeLists)
+def stiffness_on(proxy):
+  proxy.stiffnessInterpolation("RArm", 1.0, 1.0)
+# Stiffness off '''Steifigkeit aus: desaktive Steifigkeit aller Gelenke und Aktuatoren'''
+# Wir verwenden den Namen "Body", um die Sammlung aller Gelenke zu bezeichnen
+# (pNames, pStiffnessLists, pTimeLists)
+def stiffness_off(proxy):
+  proxy.stiffnessInterpolation("Body", 0.0, 1.0)
+
+
+
+
+
+
+ 
+  
+#bilinear_interpolation, algorithm is based on a mathematical formula called Bilinear Interpolation.
+#Using the following algorithm we can create a list of pixel position theta values called path for the NAO to travel tto..
+#Wir interpolieren die gewünschten Theta-Werte, indem wir ihre jeweilige Pixelposition mit den vier begrenzten Pixelpositionen im Arbeitsbereich vergleichen.
+#The bilinear_interpolation function will return a list of six theta values that will specify how the NAO will motion the current pixel position.
+def bilinear_interpolation(x, y, values):
+  values = sorted(values)
+
+  x1  = values[0][0]
+  y1  = values[0][1]
+  _x1 = values[1][0]
+  y2  = values[1][1]
+  x2  = values[2][0]
+  _y1 = values[2][1]
+  _x2 = values[3][0]
+  _y2 = values[3][1]
+
+  if x1 != _x1 or x2 != _x2 or y1 != _y1 or y2 != _y2:
+    raise ValueError('points do not form a rectangle')
+  if not x1 <= x <= x2 or not y1 <= y <= y2:
+    raise ValueError('(x, y) not within the rectangle')
+
+  q11 = values[0][2]
+  q12 = values[1][2]
+  q21 = values[2][2]
+  q22 = values[3][2]
+
+  temp1 = [i * (x2 - x) * (y2 - y) for i in q11]
+  temp2 = [i * (x - x1) * (y2 - y) for i in q21]
+  temp3 = [i * (x2 - x) * (y - y1) for i in q12]
+  temp4 = [i * (x - x1) * (y - y1) for i in q22]
+  add12 = [x + y for x,y in zip(temp1, temp2)]
+  add34 = [x + y for x,y in zip(temp3, temp4)]
+  final_add = [x + y for x,y in zip(add12, add34)]
+  temp = ((x2 - x1) * (y2 - y1) + 0.0)
+  final_temp = [i / temp for i in final_add]
+  print(final_temp)
+  return final_temp
+
+
+
+
+
+
+
+
+
+
+#The lookup_table-Funktion gibt eine Pfadliste zurück, die eine Liste aller interpolierten Pixelpositionswerte enthält (von denen jeder eine Liste von sechs Theta-Werten enthält).
+#von denen jeder eine Liste von sechs Werten enthält).
+def draw(points):
+
+  #the table is a matrix of size (pixels from camera sensor generated image )
+  pixel_rows = 460
+  pixel_columns = 640
+  grid = [[0 for x in range(pixel_rows+1)] for x in range(pixel_columns +1)]
+  
+  for i in range(0,pixel_columns+1):
+   for j in range(0,pixel_rows+1):
+## In jeder der vier angegebenen Rasterkoordinaten enthält es eine Liste von sechs Theta-Werten, die darstellen,
+# wie der rechte Arm des NAO die angegebene Position in seinem Arbeitsbereich geht.
+# Sobald wir lookup table eingerichtet haben, können wir nun die Pixel über bilineare Interpolation den spezifischen Rasterpositionen zuordnen.          
+      if i == 0 and j == 0:
+        grid[i][j] = [0.4188239574432373, 0.3141592741012573, 0.7577540874481201,
+                      0.5660879611968994, 0.5997520685195923, 0.7547999620437622]
+      elif i == 0 and j == 460:
+            grid[i][j] = [0.4157559871673584, 0.18710604310035706, 0.10273604094982147,
+                          1.152076005935669, 1.043078064918518, 0.7547999620437622]                                           
+      elif i == 640 and j == 0:
+            grid[i][j] = [0.4970579743385315, -0.3497939705848694, 0.5491300821304321,
+                          1.055433988571167, 0.9909220933914185, 0.7547999620437622]
+      elif i == 640 and j == 460:
+        grid[i][j] = [0.5216019749641418, -0.6289819478988647, 0.2530680298805237,
+                      1.5446163415908813, 1.0599520206451416, 0.7547999620437622]                 
+     
+  defined_grid_points = [[0, 0, grid[0][0]],
+                         [0, 460, grid[0][460]],
+                         [640, 460, grid[640][460]],
+                         [640, 0, grid[640][0]]]
+                         
+                         
+
+  f = open('/home/mgaiech/Documents/Coding/Rasterkoordinaten.txt', 'a')
+  f.write("\n\nTesting")
+  #Wir erstellen Sie eine Liste mit dem Namen Pfad. Diese Liste wird als endgültige Ausgabe der Liste der Listen von Theta-Werten verwendet.
+  #needed for the NAO robot to draw a desired shape to.
+  path = []
+  # Erstellen Sie eine Variable namens go_back_to_start, die die Position des ersten Pixels aufzeichnet.
+  #Diese Pixelposition wird als letzter Punkt verwendet, zu dem der NAO zeichnen kann.
+  go_back_to_start = bilinear_interpolation(points[0][0].item(0), points[0][0].item(1), defined_grid_points)
+  for i in range(len(points)):
+    for j in range(len(points[i])):
+      path.append(bilinear_interpolation(points[i][j].item(0), points[i][j].item(1), defined_grid_points))
+      f.write("\n\n " + str(bilinear_interpolation(points[i][j].item(0), points[i][j].item(1), defined_grid_points)))
+  path.append(go_back_to_start)
+  #The lookup_table function returns a path list containing a list of all the interpolated pixel 
+  # position values (each of which contains a list of six theta values).
+  f.close()
+
+  return path
+
+
+
+
+# 1- Verständnis und Implementierung eines Kantenerkennungsalgorithmus zur Identifizierung von Formen.
+def robo_vision():
+  
+  head_position = [-0.11, 0.126]
+  motionProxy.setAngles("Head", head_position, 0.1)
+  
+  time.sleep(3)
+  # Holen Sie sich zuerst ein Bild von Nao und zeigen Sie es dann mit PIL auf dem Bildschirm an.
+  video_client = camProxy.subscribeCamera("python_client", 0, resolution, colorSpace, 1)
+  nao_image = camProxy.getImageRemote(video_client)
+  camProxy.unsubscribe(video_client)
+  # Erhalten Sie ein Kamerabild.
+  #Rufen Sie die Bildgröße und das Pixelarray ab
+  # image[6] enthält die Bilddaten, die als Array von ASCII-Zeichen übergeben werden.
+  imageWidth = nao_image[0]
+  imageHeight = nao_image[1]
+  buffer = nao_image[6] = nao_image[6]
+
+  # Erstellen Sie ein PIL-Bild aus unserem Pixel-Array.
+  image = Image.frombytes("RGB", (imageWidth, imageHeight), buffer)
+  image.save("/home/mgaiech/Documents/images/" +"camImage.png", "PNG") #bild gespeichert 
+  #Das Bild wird gesnitten  um nur die Form zu haben 
+  w, h = image.size
+  image.crop((0, 10, w, h-10)).save("/home/mgaiech/Documents/images/"+"camImage.png","png")
+  ## Methode lädt ein Bild aus der angegebenen Datei
+  frame = cv2.imread('/home/mgaiech/Documents/images/camImage.png',0)
+  #  Das Bild wird in Schwarzweiß konvertiert
+  gray = cv2.cvtColor(frame, cv2.COLOR_BAYER_BG2BGR)
+  cv2.imwrite("/home/mgaiech/Documents/images/" +"Gray.png", gray)
+  # Methode , um zusätzliches Rauschen zu vermeiden
+  blur = cv2.GaussianBlur(gray, (3,3), 0)
+  cv2.imwrite("/home/mgaiech/Documents/images/" +"Blur.png", blur)
+  # Canny() Methode der cv2-Bibliothek zum Erkennen von Kanten in einem Bild.
+  canny = cv2.Canny(blur, 10, 100)
+
+  cv2.imwrite("/home/mgaiech/Documents/images/" +"CANNY.png", canny) #the wird gespeichert
+
+  # Erkennen von Konturen im Bild. Finden the bounding box in the image
+  # Eine individuelle Kontur ist ein Numpy-Array von (x,y) Koordinaten von Grenzpunkten des Objekts. 
+  # Hierarchie ist die Eltern-Kind-Beziehung in Konturen. Sie wird als Array von vier Werten dargestellt:
+  # [Nächste Kontur, vorherige Kontur, Erste untergeordnete Kontur, Übergeordnete Kontur]
+ 
+  _,binary = cv2.threshold(canny,100,255,cv2.THRESH_BINARY)
+  contours,hierarchy = cv2.findContours(binary,cv2.RETR_EXTERNAL,cv2.CHAIN_APPROX_SIMPLE)[-2:]
+  drawing = np.zeros((gray.shape[0], gray.shape[1], 3), dtype=np.uint8)
+  CountersImg = cv2.drawContours(drawing,contours, -1, (255,255,0),3)
+  cv2.imshow('Contours',CountersImg)
+  cv2.imwrite("/home/mgaiech/Documents/images/" +"Contours.png", CountersImg )
+ 
+  
+  voice.say("I will draw your shape!");
+
+  motionProxy.setStiffnesses("LArm", 1.0)
+  motionProxy.setStiffnesses("RArm", 1.0)
+
+  # Durch alle im Bild gegründeten Konturen gehen.
+  #Für jede gefundene Kontur haben wir eine kleinere Anzahl von Punkten genommen, die benötigt werden, um diese Kontur zu erstellen
+  # Für jede der erkannten Konturen wird mit der Funktion approxPolyDP() angenähert
+  f = open('/home/mgaiech/Documents/Coding/Points.txt', 'a')
+  f.write("\n\nTesting")
+  for cnt in contours:
+    approx = cv2.approxPolyDP(cnt,0.1*cv2.arcLength(cnt,True),True)
+    f.write("\n\n " + str( approx ))
+    robo_motion(approx)
+    break
+
+  # RArm wird an einem bestimmten Bereich des physischen Arbeitsplatzes ausgehen
+  # Gelenkwinkel (RShoulderPitch, RShoulderRoll, RElbowYaw, RElbowRoll, RWristYaw, RHand).
+  effector = ["RArm"]
+  path = [0.39121198654174805, -0.03839196264743805, 0.7132680416107178,
+          0.9603259563446045, 0.7884340286254883, 0.7547999620437622]
+  motionProxy.setAngles(effector, path, 0.1)# 0.1 --> fractionMaxSpeed
+  
+  #Am ende des Prog
+
+  effector = ["RArm"]
+  path = [-1.6628141403198242, 0.09506604075431824, 1.1704000234603882,
+           0.07367396354675293, 0.48470205068588257, 0.7555999755859375]
+  motionProxy.setAngles(effector, path, 0.1)      
+  time.sleep(1)    
+  voice.say("Here is your shape!")
+
+
+
+
+
+
+
+
+# 2- Erlauben Sie dem Roboter, eine Form mit der ungefähren Anzahl von Punkten an einer aktuellen Kontur zu zeichnen, die das Polygon bilden
+def robo_motion(points):
+  effector   = "RArm"
+
+  path = draw(points)
+
+  for i in range(len(path)):
+    motionProxy.setAngles(effector, path[i], 0.1)
+    time.sleep(2)
+
+
+
+
+
+
+def setup_robot():
+  try:
+    motionProxy = ALProxy("ALMotion", ip, port)
+  except Exception, e:
+    print "Could not create proxy to ALMotion"
+    print "Error was: ", e
+  try:
+    postureProxy = ALProxy("ALRobotPosture", ip, port)
+  except Exception, e:
+    print "Could not create proxy to ALRobotPosture"
+    print "Error was: ", e
+  try:
+    voice = ALProxy("ALTextToSpeech", ip, port)
+  except Exception, e:
+    print "Could not create proxy to ALTextToSpeech"
+    print "Error was: ", e
+
+def main_menu():
+  print("\nWelcome!\n")
+  robo_vision()
+  print("End of Program.")
+
+if __name__ == '__main__':
+  setup_robot()
+  main_menu()
